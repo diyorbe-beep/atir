@@ -1,6 +1,6 @@
 # HIDIM Backend API
 
-HIDIM Parfum Brendi uchun RESTful API server.
+Backend server HIDIM parfum brendi uchun API xizmatlarini ta'minlaydi.
 
 ## O'rnatish
 
@@ -8,14 +8,36 @@ HIDIM Parfum Brendi uchun RESTful API server.
 npm install
 ```
 
-## Ishga tushirish
+## Sozlash
+
+### Email Yuborish
+
+Email yuborish funksiyasini ishlatish uchun:
+
+1. **Gmail App Password yarating**:
+   - https://myaccount.google.com/ → Security
+   - 2-Step Verification yoqing
+   - App passwords → Mail → "HIDIM Backend"
+   - 16 xonali parol oling
+
+2. **.env fayl yarating**:
+   ```bash
+   cp .env.example .env
+   ```
+
+3. **.env faylini to'ldiring**:
+   ```env
+   EMAIL_USER=your-email@gmail.com
+   EMAIL_PASS=your-app-password-here
+   ```
+
+## Ishga Tushirish
 
 ```bash
 npm start
 ```
 
 Yoki development rejimida:
-
 ```bash
 npm run dev
 ```
@@ -24,59 +46,58 @@ Server `http://localhost:3001` da ishlaydi.
 
 ## API Endpoints
 
-### Orders (Buyurtmalar)
+### Orders
 - `GET /api/orders` - Barcha buyurtmalar
-- `GET /api/orders/:id` - Bitta buyurtma
-- `POST /api/orders` - Yangi buyurtma yaratish
+- `GET /api/orders/:id` - Buyurtma ma'lumotlari
+- `POST /api/orders` - Yangi buyurtma
 - `PUT /api/orders/:id` - Buyurtmani yangilash
 - `DELETE /api/orders/:id` - Buyurtmani o'chirish
 
-### Customers (Mijozlar)
+### Customers
 - `GET /api/customers` - Barcha mijozlar
-- `POST /api/customers` - Yangi mijoz yaratish
+- `POST /api/customers` - Yangi mijoz
 - `PUT /api/customers/:id` - Mijozni yangilash
 
-### Profiles (Hid profillari)
-- `GET /api/profiles` - Barcha profillar
-- `POST /api/profiles` - Yangi profil yaratish
+### Profiles
+- `GET /api/profiles` - Barcha hid profillari
+- `POST /api/profiles` - Yangi profil
 - `PUT /api/profiles/:id` - Profilni yangilash
 - `DELETE /api/profiles/:id` - Profilni o'chirish
 
-### Discounts (Chegirmalar)
-- `GET /api/discounts` - Barcha promo kodlar
-- `POST /api/discounts` - Yangi promo kod yaratish
-- `PUT /api/discounts/:id` - Promo kodni yangilash
-- `DELETE /api/discounts/:id` - Promo kodni o'chirish
+### Discounts
+- `GET /api/discounts` - Barcha chegirmalar
+- `POST /api/discounts` - Yangi chegirma
+- `PUT /api/discounts/:id` - Chegirmani yangilash
+- `DELETE /api/discounts/:id` - Chegirmani o'chirish
 
 ### Feedback
 - `GET /api/feedback` - Barcha feedbacklar
-- `POST /api/feedback` - Yangi feedback yaratish
+- `POST /api/feedback` - Yangi feedback
 
-### Surveys (Surovnomalar)
+### Surveys
 - `GET /api/surveys` - Barcha surovnomalar
-- `POST /api/surveys` - Yangi surovnoma yaratish
+- `POST /api/surveys` - Yangi surovnoma
 
-### Settings (Sozlamalar)
-- `GET /api/settings` - Sozlamalarni olish
+### Settings
+- `GET /api/settings` - Sozlamalar
 - `PUT /api/settings` - Sozlamalarni yangilash
 
 ### Dashboard
 - `GET /api/dashboard/stats` - Dashboard statistikasi
 
-### Health Check
-- `GET /api/health` - Server holatini tekshirish
+### Email Verification
+- `POST /api/email/send-code` - Tasdiqlash kodini email ga yuborish
+- `POST /api/email/verify-code` - Kodni tekshirish
 
-## Ma'lumotlar bazasi
+### Health Check
+- `GET /api/health` - Server holati
+
+## Ma'lumotlar
 
 Barcha ma'lumotlar `data.json` faylida saqlanadi. Bu fayl avtomatik yaratiladi va yangilanadi.
 
-## Port
+## Eslatmalar
 
-Default port: `3001`
-
-Portni o'zgartirish uchun environment variable ishlating:
-```bash
-PORT=3002 npm start
-```
-
-
+- Email yuborish funksiyasi `.env` faylida EMAIL_USER va EMAIL_PASS sozlanmagan bo'lsa ishlamaydi
+- Kodlar 5 daqiqa davomida amal qiladi
+- Eski kodlar har 10 daqiqada avtomatik tozalanadi

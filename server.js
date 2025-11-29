@@ -1,8 +1,10 @@
+require('dotenv').config()
 const express = require('express')
 const cors = require('cors')
 const bodyParser = require('body-parser')
 const fs = require('fs')
 const path = require('path')
+const nodemailer = require('nodemailer')
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -299,13 +301,200 @@ app.get('/api/dashboard/stats', (req, res) => {
   })
 })
 
+// ==================== EMAIL VERIFICATION ====================
+// Email transporter sozlash (Gmail uchun)
+// Environment variables: EMAIL_USER va EMAIL_PASS
+let transporter = null
+if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+  transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
+    }
+  })
+  console.log('✅ Email transporter sozlandi')
+  console.log(`📧 Email yuboruvchi: ${process.env.EMAIL_USER}`)
+} else {
+  console.warn('⚠️ EMAIL_USER va EMAIL_PASS environment variables topilmadi. Email yuborish ishlamaydi.')
+  console.warn('📝 .env faylida EMAIL_USER va EMAIL_PASS ni sozlang.')
+  console.warn('📝 EMAIL_USER=marufzonkodirov0@gmail.com')
+  console.warn('📝 EMAIL_PASS=your-app-password-here (Gmail App Password)')
+}
+
+// Kodlarni saqlash uchun (memory da, production da Redis yoki DB ishlatish kerak)
+const verificationCodes = {}
+
+// 6 xonali kod yaratish
+function generateCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString()
+}
+
+// Email yuborish endpoint
+app.post('/api/email/send-code', async (req, res) => {
+  try {
+    if (!transporter) {
+      return res.status(503).json({ 
+        success: false, 
+        message: 'Email servisi sozlanmagan. EMAIL_USER va EMAIL_PASS environment variables ni sozlang.' 
+      })
+    }
+
+    const { email, name } = req.body
+
+    if (!email || !email.endsWith('@gmail.com')) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Faqat Gmail manzil qabul qilinadi' 
+      })
+    }
+
+    // Kod yaratish
+    const code = generateCode()
+    
+    // Kodni console ga chiqarish (debug uchun)
+    console.log(`📧 ${email} uchun tasdiqlash kodi: ${code}`)
+    
+    // Kodni saqlash (5 daqiqa muddat)
+    verificationCodes[email] = {
+      code,
+      expiresAt: Date.now() + 5 * 60 * 1000 // 5 daqiqa
+    }
+
+    // Email yuborish
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: 'HIDIM - Tasdiqlash kodi',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="background-color: #F5EEE7; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+            <h2 style="color: #C79A57; margin: 0 0 10px 0;">HIDIM - Shaxsiy Parfum Brendi</h2>
+          </div>
+          <p style="color: #111111; font-size: 16px;">Salom, ${name || 'Foydalanuvchi'}!</p>
+          <p style="color: #111111; font-size: 16px;">Ro'yxatdan o'tish uchun quyidagi tasdiqlash kodidan foydalaning:</p>
+          <div style="background-color: #F5EEE7; padding: 30px; text-align: center; margin: 30px 0; border-radius: 8px; border: 2px solid #C79A57;">
+            <h1 style="color: #111111; font-size: 36px; letter-spacing: 8px; margin: 0; font-weight: bold;">${code}</h1>
+          </div>
+          <p style="color: #666; font-size: 14px; margin-top: 20px;">Bu kod 5 daqiqa davomida amal qiladi.</p>
+          <p style="color: #666; font-size: 12px; margin-top: 10px;">Agar siz bu kodni so'ramagan bo'lsangiz, bu xabarni e'tiborsiz qoldiring.</p>
+          <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;">
+            <p style="color: #999; font-size: 12px; margin: 0;">HIDIM - Shaxsiy parfum brendi</p>
+            <p style="color: #999; font-size: 12px; margin: 5px 0 0 0;">Telegram: @hidim_parfum | Instagram: @hidim.official</p>
+          </div>
+        </div>
+      `
+    }
+
+    await transporter.sendMail(mailOptions)
+    console.log(`✅ Tasdiqlash kodi yuborildi: ${email}`)
+
+    res.json({ 
+      success: true, 
+      message: 'Kod email manziliga yuborildi' 
+    })
+  } catch (error) {
+    console.error('❌ Email yuborish xatosi:', error)
+    res.status(500).json({ 
+      success: false, 
+      message: 'Email yuborishda xatolik yuz berdi',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    })
+  }
+})
+
+// Kodni tekshirish endpoint
+app.post('/api/email/verify-code', async (req, res) => {
+  try {
+    const { email, code } = req.body
+
+    if (!email || !code) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email va kod kerak' 
+      })
+    }
+
+    const stored = verificationCodes[email]
+
+    if (!stored) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Kod topilmadi yoki muddati o\'tgan' 
+      })
+    }
+
+    if (Date.now() > stored.expiresAt) {
+      delete verificationCodes[email]
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Kod muddati o\'tgan' 
+      })
+    }
+
+    // Kodni tekshirish (string sifatida)
+    const enteredCode = String(code).trim()
+    const storedCode = String(stored.code).trim()
+    
+    console.log(`🔍 Kod tekshirilmoqda: ${email}`)
+    console.log(`📝 Kiritilgan kod: ${enteredCode}`)
+    console.log(`📝 Saqlangan kod: ${storedCode}`)
+    
+    if (storedCode !== enteredCode) {
+      console.log(`❌ Kod noto'g'ri: ${email}`)
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Noto\'g\'ri kod' 
+      })
+    }
+
+    // Kod to'g'ri, kodni o'chirish
+    delete verificationCodes[email]
+    console.log(`✅ Kod tasdiqlandi: ${email}`)
+
+    res.json({ 
+      success: true, 
+      message: 'Kod tasdiqlandi' 
+    })
+  } catch (error) {
+    console.error('❌ Kod tekshirish xatosi:', error)
+    res.status(500).json({ 
+      success: false, 
+      message: 'Kodni tekshirishda xatolik yuz berdi',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    })
+  }
+})
+
+// Eski kodlarni tozalash (har 10 daqiqada)
+setInterval(() => {
+  const now = Date.now()
+  let cleaned = 0
+  for (const email in verificationCodes) {
+    if (verificationCodes[email].expiresAt < now) {
+      delete verificationCodes[email]
+      cleaned++
+    }
+  }
+  if (cleaned > 0) {
+    console.log(`🧹 ${cleaned} ta eski kod tozalandi`)
+  }
+}, 10 * 60 * 1000) // 10 daqiqa
+
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', message: 'Server is running' })
+  res.json({ 
+    status: 'OK', 
+    message: 'Server is running',
+    emailConfigured: !!transporter
+  })
 })
 
 app.listen(PORT, () => {
   console.log(`🚀 HIDIM Backend Server is running on http://localhost:${PORT}`)
   console.log(`📁 Data file: ${dataFile}`)
+  if (!transporter) {
+    console.log(`⚠️  Email yuborish uchun .env faylida EMAIL_USER va EMAIL_PASS ni sozlang`)
+  }
 })
 
