@@ -79,8 +79,14 @@ const writeData = (data) => {
 
 // ==================== ORDERS ====================
 app.get('/api/orders', (req, res) => {
-  const data = readData()
-  res.json(data.orders || [])
+  try {
+    const data = readData()
+    console.log(`📥 GET /api/orders - Buyurtmalar soni: ${(data.orders || []).length}`)
+    res.json(data.orders || [])
+  } catch (error) {
+    console.error('❌ GET /api/orders xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
+  }
 })
 
 app.get('/api/orders/:id', (req, res) => {
@@ -94,17 +100,30 @@ app.get('/api/orders/:id', (req, res) => {
 })
 
 app.post('/api/orders', (req, res) => {
-  const data = readData()
-  const newOrder = {
-    id: `#${String(data.orders.length + 1).padStart(3, '0')}`,
-    date: new Date().toISOString().split('T')[0],
-    ...req.body,
-    status: req.body.status || 'Yangi',
-    createdAt: new Date().toISOString()
+  try {
+    console.log('📤 POST /api/orders - Yangi buyurtma:', req.body)
+    const data = readData()
+    const newOrder = {
+      id: `#${String(data.orders.length + 1).padStart(3, '0')}`,
+      date: new Date().toISOString().split('T')[0],
+      ...req.body,
+      status: req.body.status || 'Yangi',
+      createdAt: new Date().toISOString()
+    }
+    data.orders.push(newOrder)
+    const saved = writeData(data)
+    if (saved) {
+      console.log(`✅ Buyurtma saqlandi: ${newOrder.id}`)
+      console.log(`📊 Jami buyurtmalar: ${data.orders.length}`)
+      res.json(newOrder)
+    } else {
+      console.error('❌ Buyurtma saqlanmadi - writeData xatosi')
+      res.status(500).json({ error: 'Buyurtma saqlanmadi' })
+    }
+  } catch (error) {
+    console.error('❌ POST /api/orders xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
   }
-  data.orders.push(newOrder)
-  writeData(data)
-  res.json(newOrder)
 })
 
 app.put('/api/orders/:id', (req, res) => {
