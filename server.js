@@ -5,11 +5,19 @@ const bodyParser = require('body-parser')
 const fs = require('fs')
 const path = require('path')
 const nodemailer = require('nodemailer')
+const { createClient } = require('@supabase/supabase-js')
 
 const app = express()
 const PORT = process.env.PORT || 3001
 
-// Data file path
+// Supabase client
+const supabaseUrl = process.env.SUPABASE_URL || 'https://ghvtzeweuqwmikyactwf.supabase.co'
+const supabaseKey = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdodnR6ZXdldXF3bWlreWFjdHdmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0ODI5NzMsImV4cCI6MjA4MDA1ODk3M30.guoQ7Bp1qMdSqm_MDomZfeFYLlV9jVqzIN2dX9f4Deg'
+const supabase = createClient(supabaseUrl, supabaseKey)
+
+console.log('✅ Supabase client yaratildi:', supabaseUrl)
+
+// Data file path (fallback uchun)
 const dataFile = path.join(__dirname, 'data.json')
 
 // Ensure data.json exists with initial data
@@ -57,11 +65,16 @@ app.use(bodyParser.urlencoded({ extended: true }))
 const readData = () => {
   try {
     if (fs.existsSync(dataFile)) {
-      return JSON.parse(fs.readFileSync(dataFile, 'utf8'))
+      const fileContent = fs.readFileSync(dataFile, 'utf8')
+      const data = JSON.parse(fileContent)
+      console.log(`📖 Data fayl o'qildi: ${dataFile}`)
+      console.log(`📊 Buyurtmalar soni: ${(data.orders || []).length}`)
+      return data
     }
+    console.warn(`⚠️ Data fayl topilmadi: ${dataFile}`)
     return { orders: [], customers: [], profiles: [], discounts: [], feedback: [], surveys: [], settings: {} }
   } catch (error) {
-    console.error('Error reading data:', error)
+    console.error('❌ Error reading data:', error)
     return { orders: [], customers: [], profiles: [], discounts: [], feedback: [], surveys: [], settings: {} }
   }
 }
@@ -69,255 +82,447 @@ const readData = () => {
 // Helper function to write data
 const writeData = (data) => {
   try {
+    console.log(`💾 Data faylga yozilmoqda: ${dataFile}`)
+    console.log(`📊 Buyurtmalar soni: ${(data.orders || []).length}`)
     fs.writeFileSync(dataFile, JSON.stringify(data, null, 2))
+    console.log(`✅ Data faylga yozildi: ${dataFile}`)
+    
+    // Tekshirish: yozilgan ma'lumotlarni o'qib ko'ramiz
+    const verifyData = readData()
+    console.log(`✅ Tekshirish: Buyurtmalar soni: ${(verifyData.orders || []).length}`)
+    
     return true
   } catch (error) {
-    console.error('Error writing data:', error)
+    console.error('❌ Error writing data:', error)
+    console.error('❌ Data file path:', dataFile)
     return false
   }
 }
 
 // ==================== ORDERS ====================
-app.get('/api/orders', (req, res) => {
+app.get('/api/orders', async (req, res) => {
   try {
-    const data = readData()
-    console.log(`📥 GET /api/orders - Buyurtmalar soni: ${(data.orders || []).length}`)
-    res.json(data.orders || [])
+    console.log(`📥 GET /api/orders - So'rov keldi`)
+    
+    // Supabase'dan buyurtmalarni olish
+    const { data: orders, error } = await supabase
+      .from('orders')
+      .select('*')
+      .order('created_at', { ascending: false })
+    
+    if (error) {
+      console.error('❌ Supabase xatosi:', error)
+      throw error
+    }
+    
+    // Frontend uchun id ni order_id ga o'zgartirish
+    const formattedOrders = (orders || []).map(order => ({
+      ...order,
+      id: order.order_id || order.id
+    }))
+    
+    console.log(`📥 GET /api/orders - Buyurtmalar soni: ${formattedOrders.length}`)
+    
+    if (formattedOrders.length > 0) {
+      console.log(`📋 Birinchi buyurtma:`, JSON.stringify(formattedOrders[0], null, 2))
+    }
+    
+    res.json(formattedOrders)
   } catch (error) {
     console.error('❌ GET /api/orders xatosi:', error)
+    console.error('❌ Error stack:', error.stack)
     res.status(500).json({ error: 'Server xatosi', message: error.message })
   }
 })
 
-app.get('/api/orders/:id', (req, res) => {
-  const data = readData()
-  const order = data.orders.find(o => o.id === req.params.id)
-  if (order) {
-    res.json(order)
-  } else {
-    res.status(404).json({ error: 'Order not found' })
+app.get('/api/orders/:id', async (req, res) => {
+  try {
+    // order_id yoki id bo'yicha qidirish
+    const { data: order, error } = await supabase
+      .from('orders')
+      .select('*')
+      .or(`order_id.eq.${req.params.id},id.eq.${req.params.id}`)
+      .single()
+    
+    if (error) {
+      console.error('❌ Supabase xatosi:', error)
+      return res.status(404).json({ error: 'Order not found' })
+    }
+    
+    // Frontend uchun id ni order_id ga o'zgartirish
+    const responseOrder = {
+      ...order,
+      id: order.order_id || order.id
+    }
+    
+    res.json(responseOrder)
+  } catch (error) {
+    console.error('❌ GET /api/orders/:id xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
   }
 })
 
-app.post('/api/orders', (req, res) => {
+app.post('/api/orders', async (req, res) => {
   try {
-    console.log('📤 POST /api/orders - Yangi buyurtma:', req.body)
-    const data = readData()
-    const newOrder = {
-      id: `#${String(data.orders.length + 1).padStart(3, '0')}`,
-      date: new Date().toISOString().split('T')[0],
-      ...req.body,
+    console.log('📤 POST /api/orders - Yangi buyurtma:', JSON.stringify(req.body, null, 2))
+    
+    // Buyurtmalar sonini olish (order_id yaratish uchun)
+    const { count } = await supabase.from('orders').select('*', { count: 'exact', head: true })
+    const orderNumber = (count || 0) + 1
+    const orderId = `#${String(orderNumber).padStart(3, '0')}`
+    
+    // Buyurtma ma'lumotlarini tayyorlash
+    const orderData = {
+      order_id: orderId, // Frontend uchun string ID
+      customer: req.body.customer,
+      phone: req.body.phone,
+      email: req.body.email || '',
+      product: req.body.product,
+      price: req.body.price,
+      comment: req.body.comment || '',
       status: req.body.status || 'Yangi',
-      createdAt: new Date().toISOString()
+      date: req.body.date || new Date().toISOString().split('T')[0],
+      created_at: new Date().toISOString()
     }
-    data.orders.push(newOrder)
-    const saved = writeData(data)
-    if (saved) {
-      console.log(`✅ Buyurtma saqlandi: ${newOrder.id}`)
-      console.log(`📊 Jami buyurtmalar: ${data.orders.length}`)
-      res.json(newOrder)
-    } else {
-      console.error('❌ Buyurtma saqlanmadi - writeData xatosi')
-      res.status(500).json({ error: 'Buyurtma saqlanmadi' })
+    
+    console.log(`📝 Supabase'ga yuborilmoqda:`, JSON.stringify(orderData, null, 2))
+    
+    // Supabase'ga buyurtma yaratish
+    const { data: newOrder, error } = await supabase
+      .from('orders')
+      .insert([orderData])
+      .select()
+      .single()
+    
+    if (error) {
+      console.error('❌ Supabase xatosi:', error)
+      throw error
     }
+    
+    // Frontend uchun id ni order_id ga o'zgartirish
+    const responseOrder = {
+      ...newOrder,
+      id: newOrder.order_id || newOrder.id
+    }
+    
+    console.log(`✅ Buyurtma saqlandi:`, JSON.stringify(responseOrder, null, 2))
+    res.json(responseOrder)
   } catch (error) {
     console.error('❌ POST /api/orders xatosi:', error)
+    console.error('❌ Error stack:', error.stack)
     res.status(500).json({ error: 'Server xatosi', message: error.message })
   }
 })
 
-app.put('/api/orders/:id', (req, res) => {
-  const data = readData()
-  const index = data.orders.findIndex(o => o.id === req.params.id)
-  if (index !== -1) {
-    data.orders[index] = { ...data.orders[index], ...req.body }
-    writeData(data)
-    res.json(data.orders[index])
-  } else {
-    res.status(404).json({ error: 'Order not found' })
+app.put('/api/orders/:id', async (req, res) => {
+  try {
+    // order_id yoki id bo'yicha yangilash
+    const { data: updatedOrder, error } = await supabase
+      .from('orders')
+      .update(req.body)
+      .or(`order_id.eq.${req.params.id},id.eq.${req.params.id}`)
+      .select()
+      .single()
+    
+    if (error) {
+      console.error('❌ Supabase xatosi:', error)
+      return res.status(404).json({ error: 'Order not found' })
+    }
+    
+    // Frontend uchun id ni order_id ga o'zgartirish
+    const responseOrder = {
+      ...updatedOrder,
+      id: updatedOrder.order_id || updatedOrder.id
+    }
+    
+    res.json(responseOrder)
+  } catch (error) {
+    console.error('❌ PUT /api/orders/:id xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
   }
 })
 
-app.delete('/api/orders/:id', (req, res) => {
-  const data = readData()
-  data.orders = data.orders.filter(o => o.id !== req.params.id)
-  writeData(data)
-  res.json({ success: true })
+app.delete('/api/orders/:id', async (req, res) => {
+  try {
+    // order_id yoki id bo'yicha o'chirish
+    const { error } = await supabase
+      .from('orders')
+      .delete()
+      .or(`order_id.eq.${req.params.id},id.eq.${req.params.id}`)
+    
+    if (error) {
+      console.error('❌ Supabase xatosi:', error)
+      return res.status(404).json({ error: 'Order not found' })
+    }
+    
+    res.json({ success: true })
+  } catch (error) {
+    console.error('❌ DELETE /api/orders/:id xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
+  }
 })
 
 // ==================== CUSTOMERS ====================
-app.get('/api/customers', (req, res) => {
-  const data = readData()
-  res.json(data.customers || [])
-})
-
-app.post('/api/customers', (req, res) => {
-  const data = readData()
-  const newCustomer = {
-    id: Date.now(),
-    ...req.body,
-    orders: req.body.orders || 0,
-    createdAt: new Date().toISOString()
+app.get('/api/customers', async (req, res) => {
+  try {
+    const { data: customers, error } = await supabase
+      .from('customers')
+      .select('*')
+      .order('created_at', { ascending: false })
+    
+    if (error) throw error
+    res.json(customers || [])
+  } catch (error) {
+    console.error('❌ GET /api/customers xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
   }
-  data.customers.push(newCustomer)
-  writeData(data)
-  res.json(newCustomer)
 })
 
-app.put('/api/customers/:id', (req, res) => {
-  const data = readData()
-  const index = data.customers.findIndex(c => c.id == req.params.id)
-  if (index !== -1) {
-    data.customers[index] = { ...data.customers[index], ...req.body }
-    writeData(data)
-    res.json(data.customers[index])
-  } else {
-    res.status(404).json({ error: 'Customer not found' })
+app.post('/api/customers', async (req, res) => {
+  try {
+    const customerData = {
+      ...req.body,
+      orders: req.body.orders || 0,
+      created_at: new Date().toISOString()
+    }
+    
+    const { data: newCustomer, error } = await supabase
+      .from('customers')
+      .insert([customerData])
+      .select()
+      .single()
+    
+    if (error) throw error
+    res.json(newCustomer)
+  } catch (error) {
+    console.error('❌ POST /api/customers xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
+  }
+})
+
+app.put('/api/customers/:id', async (req, res) => {
+  try {
+    const { data: updatedCustomer, error } = await supabase
+      .from('customers')
+      .update(req.body)
+      .eq('id', req.params.id)
+      .select()
+      .single()
+    
+    if (error) {
+      return res.status(404).json({ error: 'Customer not found' })
+    }
+    res.json(updatedCustomer)
+  } catch (error) {
+    console.error('❌ PUT /api/customers/:id xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
   }
 })
 
 // ==================== PROFILES ====================
-app.get('/api/profiles', (req, res) => {
-  const data = readData()
-  res.json(data.profiles || [])
-})
-
-app.post('/api/profiles', (req, res) => {
-  const data = readData()
-  const newProfile = {
-    id: Date.now(),
-    ...req.body,
-    customers: 0
-  }
-  data.profiles.push(newProfile)
-  writeData(data)
-  res.json(newProfile)
-})
-
-app.put('/api/profiles/:id', (req, res) => {
-  const data = readData()
-  const index = data.profiles.findIndex(p => p.id == req.params.id)
-  if (index !== -1) {
-    data.profiles[index] = { ...data.profiles[index], ...req.body }
-    writeData(data)
-    res.json(data.profiles[index])
-  } else {
-    res.status(404).json({ error: 'Profile not found' })
+app.get('/api/profiles', async (req, res) => {
+  try {
+    const { data: profiles, error } = await supabase.from('profiles').select('*')
+    if (error) throw error
+    res.json(profiles || [])
+  } catch (error) {
+    console.error('❌ GET /api/profiles xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
   }
 })
 
-app.delete('/api/profiles/:id', (req, res) => {
-  const data = readData()
-  data.profiles = data.profiles.filter(p => p.id != req.params.id)
-  writeData(data)
-  res.json({ success: true })
+app.post('/api/profiles', async (req, res) => {
+  try {
+    const profileData = { ...req.body, customers: req.body.customers || 0 }
+    const { data: newProfile, error } = await supabase.from('profiles').insert([profileData]).select().single()
+    if (error) throw error
+    res.json(newProfile)
+  } catch (error) {
+    console.error('❌ POST /api/profiles xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
+  }
+})
+
+app.put('/api/profiles/:id', async (req, res) => {
+  try {
+    const { data: updatedProfile, error } = await supabase.from('profiles').update(req.body).eq('id', req.params.id).select().single()
+    if (error) return res.status(404).json({ error: 'Profile not found' })
+    res.json(updatedProfile)
+  } catch (error) {
+    console.error('❌ PUT /api/profiles/:id xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
+  }
+})
+
+app.delete('/api/profiles/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('profiles').delete().eq('id', req.params.id)
+    if (error) return res.status(404).json({ error: 'Profile not found' })
+    res.json({ success: true })
+  } catch (error) {
+    console.error('❌ DELETE /api/profiles/:id xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
+  }
 })
 
 // ==================== DISCOUNTS ====================
-app.get('/api/discounts', (req, res) => {
-  const data = readData()
-  res.json(data.discounts || [])
-})
-
-app.post('/api/discounts', (req, res) => {
-  const data = readData()
-  const newDiscount = {
-    id: Date.now(),
-    ...req.body,
-    active: req.body.active !== undefined ? req.body.active : true
-  }
-  data.discounts.push(newDiscount)
-  writeData(data)
-  res.json(newDiscount)
-})
-
-app.put('/api/discounts/:id', (req, res) => {
-  const data = readData()
-  const index = data.discounts.findIndex(d => d.id == req.params.id)
-  if (index !== -1) {
-    data.discounts[index] = { ...data.discounts[index], ...req.body }
-    writeData(data)
-    res.json(data.discounts[index])
-  } else {
-    res.status(404).json({ error: 'Discount not found' })
+app.get('/api/discounts', async (req, res) => {
+  try {
+    const { data: discounts, error } = await supabase.from('discounts').select('*')
+    if (error) throw error
+    res.json(discounts || [])
+  } catch (error) {
+    console.error('❌ GET /api/discounts xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
   }
 })
 
-app.delete('/api/discounts/:id', (req, res) => {
-  const data = readData()
-  data.discounts = data.discounts.filter(d => d.id != req.params.id)
-  writeData(data)
-  res.json({ success: true })
+app.post('/api/discounts', async (req, res) => {
+  try {
+    const discountData = { ...req.body, active: req.body.active !== undefined ? req.body.active : true }
+    const { data: newDiscount, error } = await supabase.from('discounts').insert([discountData]).select().single()
+    if (error) throw error
+    res.json(newDiscount)
+  } catch (error) {
+    console.error('❌ POST /api/discounts xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
+  }
+})
+
+app.put('/api/discounts/:id', async (req, res) => {
+  try {
+    const { data: updatedDiscount, error } = await supabase.from('discounts').update(req.body).eq('id', req.params.id).select().single()
+    if (error) return res.status(404).json({ error: 'Discount not found' })
+    res.json(updatedDiscount)
+  } catch (error) {
+    console.error('❌ PUT /api/discounts/:id xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
+  }
+})
+
+app.delete('/api/discounts/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('discounts').delete().eq('id', req.params.id)
+    if (error) return res.status(404).json({ error: 'Discount not found' })
+    res.json({ success: true })
+  } catch (error) {
+    console.error('❌ DELETE /api/discounts/:id xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
+  }
 })
 
 // ==================== FEEDBACK ====================
-app.get('/api/feedback', (req, res) => {
-  const data = readData()
-  res.json(data.feedback || [])
+app.get('/api/feedback', async (req, res) => {
+  try {
+    const { data: feedback, error } = await supabase.from('feedback').select('*').order('created_at', { ascending: false })
+    if (error) throw error
+    res.json(feedback || [])
+  } catch (error) {
+    console.error('❌ GET /api/feedback xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
+  }
 })
 
-app.post('/api/feedback', (req, res) => {
-  const data = readData()
-  const newFeedback = {
-    id: Date.now(),
-    ...req.body,
-    createdAt: new Date().toISOString()
+app.post('/api/feedback', async (req, res) => {
+  try {
+    const feedbackData = { ...req.body, created_at: new Date().toISOString() }
+    const { data: newFeedback, error } = await supabase.from('feedback').insert([feedbackData]).select().single()
+    if (error) throw error
+    res.json(newFeedback)
+  } catch (error) {
+    console.error('❌ POST /api/feedback xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
   }
-  data.feedback.push(newFeedback)
-  writeData(data)
-  res.json(newFeedback)
 })
 
 // ==================== SURVEYS ====================
-app.get('/api/surveys', (req, res) => {
-  const data = readData()
-  res.json(data.surveys || [])
+app.get('/api/surveys', async (req, res) => {
+  try {
+    const { data: surveys, error } = await supabase.from('surveys').select('*').order('created_at', { ascending: false })
+    if (error) throw error
+    res.json(surveys || [])
+  } catch (error) {
+    console.error('❌ GET /api/surveys xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
+  }
 })
 
-app.post('/api/surveys', (req, res) => {
-  const data = readData()
-  const newSurvey = {
-    id: Date.now(),
-    ...req.body,
-    createdAt: new Date().toISOString()
+app.post('/api/surveys', async (req, res) => {
+  try {
+    const surveyData = { ...req.body, created_at: new Date().toISOString() }
+    const { data: newSurvey, error } = await supabase.from('surveys').insert([surveyData]).select().single()
+    if (error) throw error
+    res.json(newSurvey)
+  } catch (error) {
+    console.error('❌ POST /api/surveys xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
   }
-  data.surveys.push(newSurvey)
-  writeData(data)
-  res.json(newSurvey)
 })
 
 // ==================== SETTINGS ====================
-app.get('/api/settings', (req, res) => {
-  const data = readData()
-  res.json(data.settings || {})
+app.get('/api/settings', async (req, res) => {
+  try {
+    const { data: settings, error } = await supabase.from('settings').select('*').single()
+    if (error && error.code !== 'PGRST116') throw error
+    res.json(settings || {})
+  } catch (error) {
+    console.error('❌ GET /api/settings xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
+  }
 })
 
-app.put('/api/settings', (req, res) => {
-  const data = readData()
-  data.settings = { ...data.settings, ...req.body }
-  writeData(data)
-  res.json(data.settings)
+app.put('/api/settings', async (req, res) => {
+  try {
+    // Settings jadvalida faqat bitta qator bo'lishi kerak
+    const { data: existing, error: checkError } = await supabase.from('settings').select('*').single()
+    
+    if (checkError && checkError.code === 'PGRST116') {
+      // Settings yo'q, yangi yaratish
+      const { data: newSettings, error } = await supabase.from('settings').insert([req.body]).select().single()
+      if (error) throw error
+      res.json(newSettings)
+    } else {
+      // Settings mavjud, yangilash
+      const { data: updatedSettings, error } = await supabase.from('settings').update(req.body).eq('id', existing.id).select().single()
+      if (error) throw error
+      res.json(updatedSettings)
+    }
+  } catch (error) {
+    console.error('❌ PUT /api/settings xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
+  }
 })
 
 // ==================== DASHBOARD STATS ====================
-app.get('/api/dashboard/stats', (req, res) => {
-  const data = readData()
-  const today = new Date().toISOString().split('T')[0]
-  
-  const todayOrders = data.orders.filter(o => o.date === today)
-  const todayProbniks = todayOrders.filter(o => o.product && o.product.includes('10 ml'))
-  const todayFlakons = todayOrders.filter(o => o.product && (o.product.includes('50 ml') || o.product.includes('100 ml')))
-  const totalRevenue = todayOrders.reduce((sum, o) => {
-    const price = parseInt(o.price?.replace(/\s/g, '') || 0)
-    return sum + price
-  }, 0)
+app.get('/api/dashboard/stats', async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0]
+    
+    // Bugungi buyurtmalarni olish
+    const { data: todayOrders, error } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('date', today)
+    
+    if (error) throw error
+    
+    const todayProbniks = todayOrders.filter(o => o.product && o.product.includes('10 ml'))
+    const todayFlakons = todayOrders.filter(o => o.product && (o.product.includes('50 ml') || o.product.includes('100 ml')))
+    const totalRevenue = todayOrders.reduce((sum, o) => {
+      const price = parseInt(o.price?.replace(/\s/g, '') || 0)
+      return sum + price
+    }, 0)
 
-  res.json({
-    todayOrders: todayOrders.length,
-    todayProbniks: todayProbniks.length,
-    todayFlakons: todayFlakons.length,
-    totalRevenue: totalRevenue
-  })
+    res.json({
+      todayOrders: todayOrders.length,
+      todayProbniks: todayProbniks.length,
+      todayFlakons: todayFlakons.length,
+      totalRevenue: totalRevenue
+    })
+  } catch (error) {
+    console.error('❌ GET /api/dashboard/stats xatosi:', error)
+    res.status(500).json({ error: 'Server xatosi', message: error.message })
+  }
 })
 
 // ==================== EMAIL VERIFICATION ====================
