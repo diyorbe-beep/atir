@@ -440,7 +440,15 @@ app.get('/api/surveys', async (req, res) => {
   try {
     const { data: surveys, error } = await supabase.from('surveys').select('*').order('created_at', { ascending: false })
     if (error) throw error
-    res.json(surveys || [])
+    
+    // Frontend uchun camelCase ga o'zgartirish
+    const formattedSurveys = (surveys || []).map(survey => ({
+      ...survey,
+      favoritePerfumes: survey.favorite_perfumes,
+      dislikedScents: survey.disliked_scents
+    }))
+    
+    res.json(formattedSurveys)
   } catch (error) {
     console.error('❌ GET /api/surveys xatosi:', error)
     res.status(500).json({ error: 'Server xatosi', message: error.message })
@@ -449,10 +457,32 @@ app.get('/api/surveys', async (req, res) => {
 
 app.post('/api/surveys', async (req, res) => {
   try {
-    const surveyData = { ...req.body, created_at: new Date().toISOString() }
+    // Frontend'dan kelgan camelCase ma'lumotlarni snake_case ga o'zgartirish
+    const surveyData = {
+      name: req.body.name,
+      age: req.body.age,
+      gender: req.body.gender,
+      season: req.body.season,
+      character: req.body.character || [],
+      favorite_perfumes: req.body.favoritePerfumes || req.body.favorite_perfumes,
+      disliked_scents: req.body.dislikedScents || req.body.disliked_scents,
+      intensity: req.body.intensity,
+      occasion: req.body.occasion,
+      phone: req.body.phone,
+      created_at: new Date().toISOString()
+    }
+    
     const { data: newSurvey, error } = await supabase.from('surveys').insert([surveyData]).select().single()
     if (error) throw error
-    res.json(newSurvey)
+    
+    // Frontend uchun camelCase ga o'zgartirish
+    const responseSurvey = {
+      ...newSurvey,
+      favoritePerfumes: newSurvey.favorite_perfumes,
+      dislikedScents: newSurvey.disliked_scents
+    }
+    
+    res.json(responseSurvey)
   } catch (error) {
     console.error('❌ POST /api/surveys xatosi:', error)
     res.status(500).json({ error: 'Server xatosi', message: error.message })
